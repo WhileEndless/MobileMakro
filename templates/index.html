@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Macro Application</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f0f2f5;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+        }
+        .macro-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .macro-item {
+            cursor: pointer;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .macro-item:hover {
+            background-color: #e9ecef;
+        }
+        .selected {
+            background-color: #007bff !important;
+            color: white !important;
+        }
+        #loading-spinner {
+            display: none;
+        }
+        #modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        #modal-image-container {
+            position: relative;
+            display: inline-block;
+        }
+        #modal-overlay img {
+            max-width: 90%;
+            max-height: 90%;
+        }
+        .swipe-point {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: rgba(255, 255, 255, 0.5);
+            border: 2px solid white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            cursor: move;
+        }
+        #swipe-line {
+            position: absolute;
+            height: 2px;
+            background-color: white;
+            pointer-events: none;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="text-center mb-4">Macro Application</h1>
+        <div class="row">
+            <div class="col-md-4">
+                <h4 class="text-secondary">Macro List</h4>
+                <div id="macro-list" class="list-group macro-list mb-3"></div>
+                <button id="new-macro-btn" class="btn btn-primary w-100"><i class="fas fa-plus"></i> Create New Macro</button>
+            </div>
+            <div class="col-md-8">
+                <h4 class="text-secondary">Edit Macro</h4>
+                <form id="macro-form">
+                    <input type="hidden" id="macro-id">
+                    <div class="mb-3">
+                        <label for="macro-name" class="form-label">Macro Name</label>
+                        <input type="text" class="form-control" id="macro-name" required>
+                    </div>
+                    <div id="macro-steps"></div>
+                    <div class="button-group">
+                        <button type="button" id="add-step-btn" class="btn btn-secondary"><i class="fas fa-plus"></i> Add Step</button>
+                        <button type="submit" class="btn btn-success"><i class="fas fa-save"></i> Save</button>
+                        <button type="button" id="delete-macro-btn" class="btn btn-danger"><i class="fas fa-trash-alt"></i> Delete</button>
+                    </div>
+                </form>
+                <hr class="my-4">
+                <h4 class="text-secondary">Send Macro</h4>
+                <div class="mb-3">
+                    <label for="device-selection" class="form-label">Select Device</label>
+                    <select id="device-selection" class="form-select"></select>
+                </div>
+                <div class="button-group">
+                    <button id="send-macro-btn" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Send Selected Macro</button>
+                    <button id="screenshot-btn" class="btn btn-primary"><i class="fas fa-camera"></i> Take Screenshot</button>
+                </div>
+                <div id="loading-spinner" class="mt-3 text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Processing macro, please wait...</p>
+                </div>
+                <hr class="my-4">
+                <h4 class="text-secondary">Send Direct Text</h4>
+                <div class="mb-3">
+                    <label for="direct-text" class="form-label">Text</label>
+                    <input type="text" class="form-control" id="direct-text" placeholder="Enter text to send">
+                </div>
+                <button id="send-direct-btn" class="btn btn-info"><i class="fas fa-paper-plane"></i> Send Text</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for recording coordinates -->
+    <div id="modal-overlay" style="display: none;">
+        <div id="modal-image-container">
+            <img id="modal-image" src="">
+            <div id="swipe-point-1" class="swipe-point" style="display: none;">1</div>
+            <div id="swipe-point-2" class="swipe-point" style="display: none;">2</div>
+            <div id="swipe-line"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/js/all.min.js"></script>
+    <script>
+        let selectedMacroId = null;
+        let macroActive = false;
+
+        function getMacros() {
+            fetch('/get_macros')
+                .then(response => response.json())
+                .then(data => {
+                    const macroList = document.getElementById('macro-list');
+                    macroList.innerHTML = '';
+                    data.forEach(macro => {
+                        const macroItem = document.createElement('a');
+                        macroItem.href = '#';
+                        macroItem.className = 'list-group-item list-group-item-action macro-item';
+                        macroItem.textContent = macro.name;
+                        macroItem.onclick = () => editMacro(macro, macroItem);
+                        macroList.appendChild(macroItem);
+                    });
+                });
+        }
+
+        function getDevices() {
+            fetch('/get_devices')
+                .then(response => response.json())
+                .then(data => {
+                    const deviceSelection = document.getElementById('device-selection');
+                    deviceSelection.innerHTML = '';
+                    data.forEach(device => {
+                        const option = document.createElement('option');
+                        option.value = device;
+                        option.textContent = device;
+                        deviceSelection.appendChild(option);
+                    });
+                });
+        }
+
+        function editMacro(macro, macroItem) {
+            selectedMacroId = macro.id;
+            document.getElementById('macro-id').value = macro.id;
+            document.getElementById('macro-name').value = macro.name;
+            const macroSteps = document.getElementById('macro-steps');
+            macroSteps.innerHTML = '';
+            macro.content.forEach((step, index) => addStep(step, index));
+
+            document.querySelectorAll('.macro-item').forEach(item => item.classList.remove('selected'));
+            macroItem.classList.add('selected');
+        }
+
+        function addStep(step = null, index = null) {
+            const macroSteps = document.getElementById('macro-steps');
+            const newStep = document.createElement('div');
+            newStep.className = 'mb-3 d-flex align-items-center';
+            newStep.draggable = true;
+
+            const select = document.createElement('select');
+            select.className = 'form-select me-2';
+            select.style.width = '150px';
+
+            const actionTypes = [
+                { value: 'text', text: 'Text' },
+                { value: 'tab', text: 'Tab' },
+                { value: 'enter', text: 'Enter' },
+                { value: 'wait', text: 'Wait' },
+                { value: 'command', text: 'Command' },
+                { value: 'tap', text: 'Tap' },
+                { value: 'swipe', text: 'Swipe' },
+                // Newly added key events
+                { value: 'back', text: 'Back' },
+                { value: 'home', text: 'Home' },
+                { value: 'overview', text: 'Overview' },
+                { value: 'volume_up', text: 'Volume Up' },
+                { value: 'volume_down', text: 'Volume Down' },
+                { value: 'power', text: 'Power' }
+            ];
+
+            actionTypes.forEach(action => {
+                const option = document.createElement('option');
+                option.value = action.value;
+                option.textContent = action.text;
+                if (step && step.type === action.value) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+
+            newStep.appendChild(select);
+
+            // Create a div to hold the input fields
+            const inputContainer = document.createElement('div');
+            inputContainer.className = 'd-flex align-items-center me-2 flex-grow-1';
+            newStep.appendChild(inputContainer);
+
+            const updateInputFields = () => {
+                // Clear existing inputs
+                inputContainer.innerHTML = '';
+
+                const type = select.value;
+
+                if (type === 'text' || type === 'command') {
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'form-control';
+                    input.style.flex = '1';
+                    input.value = step && step.value ? step.value : '';
+                    inputContainer.appendChild(input);
+                } else if (type === 'wait') {
+                    const input = document.createElement('input');
+                    input.type = 'number';
+                    input.className = 'form-control';
+                    input.placeholder = 'Seconds';
+                    input.value = step && step.value ? step.value : '';
+                    inputContainer.appendChild(input);
+                } else if (type === 'tap') {
+                    // Inputs for x and y coordinates
+                    const inputX = document.createElement('input');
+                    inputX.type = 'number';
+                    inputX.className = 'form-control me-1';
+                    inputX.placeholder = 'X';
+                    inputX.style.width = '70px';
+                    inputX.value = step && step.x ? step.x : '';
+
+                    const inputY = document.createElement('input');
+                    inputY.type = 'number';
+                    inputY.className = 'form-control me-1';
+                    inputY.placeholder = 'Y';
+                    inputY.style.width = '70px';
+                    inputY.value = step && step.y ? step.y : '';
+
+                    inputContainer.appendChild(inputX);
+                    inputContainer.appendChild(inputY);
+
+                    // Record button
+                    const recordBtn = document.createElement('button');
+                    recordBtn.type = 'button';
+                    recordBtn.className = 'btn btn-secondary btn-sm me-1';
+                    recordBtn.textContent = 'Record';
+
+                    recordBtn.onclick = () => {
+                        // Implement record functionality
+                        recordCoordinates('tap', inputX, inputY);
+                    };
+
+                    inputContainer.appendChild(recordBtn);
+
+                } else if (type === 'swipe') {
+                    // Inputs for x1, y1, x2, y2, duration
+                    const inputX1 = document.createElement('input');
+                    inputX1.type = 'number';
+                    inputX1.className = 'form-control me-1';
+                    inputX1.placeholder = 'X1';
+                    inputX1.style.width = '70px';
+                    inputX1.value = step && step.x1 ? step.x1 : '';
+
+                    const inputY1 = document.createElement('input');
+                    inputY1.type = 'number';
+                    inputY1.className = 'form-control me-1';
+                    inputY1.placeholder = 'Y1';
+                    inputY1.style.width = '70px';
+                    inputY1.value = step && step.y1 ? step.y1 : '';
+
+                    const inputX2 = document.createElement('input');
+                    inputX2.type = 'number';
+                    inputX2.className = 'form-control me-1';
+                    inputX2.placeholder = 'X2';
+                    inputX2.style.width = '70px';
+                    inputX2.value = step && step.x2 ? step.x2 : '';
+
+                    const inputY2 = document.createElement('input');
+                    inputY2.type = 'number';
+                    inputY2.className = 'form-control me-1';
+                    inputY2.placeholder = 'Y2';
+                    inputY2.style.width = '70px';
+                    inputY2.value = step && step.y2 ? step.y2 : '';
+
+                    const inputDuration = document.createElement('input');
+                    inputDuration.type = 'number';
+                    inputDuration.className = 'form-control me-1';
+                    inputDuration.placeholder = 'Duration (ms)';
+                    inputDuration.style.width = '150px'; // Increase the width of the duration input
+                    inputDuration.value = step && step.duration ? step.duration : '';
+
+                    inputContainer.appendChild(inputX1);
+                    inputContainer.appendChild(inputY1);
+                    inputContainer.appendChild(inputX2);
+                    inputContainer.appendChild(inputY2);
+                    inputContainer.appendChild(inputDuration);
+
+                    // Record button
+                    const recordBtn = document.createElement('button');
+                    recordBtn.type = 'button';
+                    recordBtn.className = 'btn btn-secondary btn-sm me-1';
+                    recordBtn.textContent = 'Record';
+
+                    recordBtn.onclick = () => {
+                        // Implement record functionality
+                        recordCoordinates('swipe', inputX1, inputY1, inputX2, inputY2);
+                    };
+
+                    inputContainer.appendChild(recordBtn);
+
+                } else {
+                    // No input needed for key event
+                }
+            };
+
+            select.onchange = updateInputFields;
+
+            updateInputFields();
+
+            // Up button
+            const upBtn = document.createElement('button');
+            upBtn.type = 'button';
+            upBtn.className = 'btn btn-light me-1';
+            upBtn.innerHTML = '↑';
+            upBtn.onclick = () => {
+                const previous = newStep.previousElementSibling;
+                if (previous) {
+                    macroSteps.insertBefore(newStep, previous);
+                }
+            };
+            newStep.appendChild(upBtn);
+
+            // Down button
+            const downBtn = document.createElement('button');
+            downBtn.type = 'button';
+            downBtn.className = 'btn btn-light me-1';
+            downBtn.innerHTML = '↓';
+            downBtn.onclick = () => {
+                const next = newStep.nextElementSibling;
+                if (next) {
+                    macroSteps.insertBefore(next, newStep);
+                }
+            };
+            newStep.appendChild(downBtn);
+
+            // Test button
+            const testBtn = document.createElement('button');
+            testBtn.type = 'button';
+            testBtn.className = 'btn btn-info me-1';
+            testBtn.textContent = 'Test';
+            testBtn.onclick = () => {
+                const device = document.getElementById('device-selection').value;
+                if (!device) {
+                    alert('Please select a device.');
+                    return;
+                }
+
+                let stepData = getStepData(newStep);
+
+                fetch('/test_step', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ step: stepData, device: device })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Step successfully executed.');
+                    } else {
+                        alert('An error occurred while executing the step.');
+                    }
+                });
+            };
+            newStep.appendChild(testBtn);
+
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'btn btn-danger';
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.onclick = () => newStep.remove();
+            newStep.appendChild(deleteBtn);
+
+            if (index !== null && macroSteps.children[index]) {
+                macroSteps.children[index].replaceWith(newStep);
+            } else {
+                macroSteps.appendChild(newStep);
+            }
+        }
+
+        function getStepData(stepElement) {
+            const type = stepElement.querySelector('select').value;
+            let stepData = { type };
+            if (type === 'text' || type === 'command' || type === 'wait') {
+                const value = stepElement.querySelector('input').value;
+                stepData.value = value;
+            } else if (type === 'tap') {
+                const inputs = stepElement.querySelectorAll('input');
+                stepData.x = inputs[0].value;
+                stepData.y = inputs[1].value;
+            } else if (type === 'swipe') {
+                const inputs = stepElement.querySelectorAll('input');
+                stepData.x1 = inputs[0].value;
+                stepData.y1 = inputs[1].value;
+                stepData.x2 = inputs[2].value;
+                stepData.y2 = inputs[3].value;
+                stepData.duration = inputs[4].value || 300;
+            }
+            return stepData;
+        }
+
+        function recordCoordinates(type, ...inputs) {
+            const device = document.getElementById('device-selection').value;
+            if (!device) {
+                alert('Please select a device.');
+                return;
+            }
+
+            fetch('/screenshot?device=' + encodeURIComponent(device))
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+
+                    const modal = document.getElementById('modal-overlay');
+                    const imgContainer = document.getElementById('modal-image-container');
+                    const img = document.getElementById('modal-image');
+                    const point1 = document.getElementById('swipe-point-1');
+                    const point2 = document.getElementById('swipe-point-2');
+                    const swipeLine = document.getElementById('swipe-line');
+
+                    img.src = url;
+                    modal.style.display = 'flex';
+
+                    if (type === 'tap') {
+                        point1.style.display = 'none';
+                        point2.style.display = 'none';
+                        swipeLine.style.display = 'none';
+                        img.onclick = (e) => {
+                            const rect = img.getBoundingClientRect();
+                            const x = e.clientX - rect.left;
+                            const y = e.clientY - rect.top;
+                            const imgWidth = img.naturalWidth;
+                            const imgHeight = img.naturalHeight;
+                            const scaleX = imgWidth / img.width;
+                            const scaleY = imgHeight / img.height;
+                            const realX = Math.round(x * scaleX);
+                            const realY = Math.round(y * scaleY);
+
+                            inputs[0].value = realX;
+                            inputs[1].value = realY;
+
+                            modal.style.display = 'none';
+                        };
+                    } else if (type === 'swipe') {
+                        point1.style.display = 'flex';
+                        point2.style.display = 'flex';
+                        swipeLine.style.display = 'block';
+
+                        // Check if there are existing coordinates and use them if present
+                        if (inputs[0].value && inputs[1].value && inputs[2].value && inputs[3].value) {
+                            const x1 = inputs[0].value;
+                            const y1 = inputs[1].value;
+                            const x2 = inputs[2].value;
+                            const y2 = inputs[3].value;
+
+                            setPointPosition(point1, (x1 / img.naturalWidth) * img.width, (y1 / img.naturalHeight) * img.height);
+                            setPointPosition(point2, (x2 / img.naturalWidth) * img.width, (y2 / img.naturalHeight) * img.height);
+                        } else {
+                            // More visible default positions if no existing values (closer to the center of the image)
+                            setPointPosition(point1, img.width * 0.4, img.height * 0.5);
+                            setPointPosition(point2, img.width * 0.6, img.height * 0.5);
+                        }
+
+                        updateSwipeLine();
+
+                        let isDragging = false;
+                        let currentPoint = null;
+
+                        function updateSwipeLine() {
+                            const rect1 = point1.getBoundingClientRect();
+                            const rect2 = point2.getBoundingClientRect();
+                            const imgRect = img.getBoundingClientRect();
+
+                            const x1 = rect1.left + rect1.width / 2 - imgRect.left;
+                            const y1 = rect1.top + rect1.height / 2 - imgRect.top;
+                            const x2 = rect2.left + rect2.width / 2 - imgRect.left;
+                            const y2 = rect2.top + rect2.height / 2 - imgRect.top;
+
+                            const length = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+                            const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+
+                            swipeLine.style.width = `${length}px`;
+                            swipeLine.style.left = `${x1}px`;
+                            swipeLine.style.top = `${y1}px`;
+                            swipeLine.style.transform = `rotate(${angle}deg)`;
+                            swipeLine.style.transformOrigin = '0 0';  // Ensure the starting point is at 0,0.
+                        }
+
+                        function setPointPosition(point, x, y) {
+                            point.style.left = `${x - point.offsetWidth / 2}px`;
+                            point.style.top = `${y - point.offsetHeight / 2}px`;
+                        }
+
+                        [point1, point2].forEach(point => {
+                            point.addEventListener('mousedown', (e) => {
+                                isDragging = true;
+                                currentPoint = point;
+                                e.preventDefault();
+                            });
+                        });
+
+                        document.addEventListener('mousemove', (e) => {
+                            if (isDragging && currentPoint) {
+                                const rect = img.getBoundingClientRect();
+                                const x = e.clientX - rect.left;
+                                const y = e.clientY - rect.top;
+                                setPointPosition(currentPoint, x, y);
+                                updateSwipeLine();
+                            }
+                        });
+
+                        document.addEventListener('mouseup', () => {
+                            isDragging = false;
+                            currentPoint = null;
+                        });
+
+                        img.addEventListener('load', () => {
+                            updateSwipeLine();
+                        });
+
+                        modal.onclick = (e) => {
+                            if (e.target === modal) {
+                                const imgWidth = img.naturalWidth;
+                                const imgHeight = img.naturalHeight;
+                                const scaleX = imgWidth / img.width;
+                                const scaleY = imgHeight / img.height;
+
+                                const rect1 = point1.getBoundingClientRect();
+                                const rect2 = point2.getBoundingClientRect();
+                                const imgRect = img.getBoundingClientRect();
+
+                                const x1 = Math.round((rect1.left + rect1.width / 2 - imgRect.left) * scaleX);
+                                const y1 = Math.round((rect1.top + rect1.height / 2 - imgRect.top) * scaleY);
+                                const x2 = Math.round((rect2.left + rect2.width / 2 - imgRect.left) * scaleX);
+                                const y2 = Math.round((rect2.top + rect2.height / 2 - imgRect.top) * scaleY);
+
+                                inputs[0].value = x1;
+                                inputs[1].value = y1;
+                                inputs[2].value = x2;
+                                inputs[3].value = y2;
+
+                                modal.style.display = 'none';
+                            }
+                        };
+                    }
+                });
+        }
+
+        document.getElementById('new-macro-btn').onclick = () => {
+            selectedMacroId = null;
+            document.getElementById('macro-id').value = '';
+            document.getElementById('macro-form').reset();
+            document.getElementById('macro-steps').innerHTML = '';
+            document.querySelectorAll('.macro-item').forEach(item => item.classList.remove('selected'));
+        };
+
+        document.getElementById('add-step-btn').onclick = () => addStep();
+
+        document.getElementById('macro-form').onsubmit = (e) => {
+            e.preventDefault();
+            const macroId = document.getElementById('macro-id').value;
+            const macroName = document.getElementById('macro-name').value;
+            const macroSteps = document.getElementById('macro-steps');
+            const steps = Array.from(macroSteps.children).map(step => getStepData(step));
+
+            const data = {
+                id: macroId || null,
+                name: macroName,
+                content: steps
+            };
+
+            const url = macroId ? '/update_macro' : '/add_macro';
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(() => {
+                getMacros();
+                alert('Macro successfully saved.');
+                // We are not clearing the screen
+                // selectedMacroId = null;
+            });
+        };
+
+        document.getElementById('delete-macro-btn').onclick = () => {
+            if (!selectedMacroId) {
+                alert('Please select a macro.');
+                return;
+            }
+            fetch('/delete_macro', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ id: selectedMacroId })
+            })
+            .then(response => response.json())
+            .then(() => {
+                getMacros();
+                document.getElementById('macro-form').reset();
+                document.getElementById('macro-steps').innerHTML = '';
+                selectedMacroId = null;
+            });
+        };
+
+        document.getElementById('send-macro-btn').onclick = () => {
+            if (macroActive) {
+                alert("Another macro is currently being processed. Please wait.");
+                return;
+            }
+
+            if (!selectedMacroId) {
+                alert('Please select a macro.');
+                return;
+            }
+            const device = document.getElementById('device-selection').value;
+            if (!device) {
+                alert('Please select a device.');
+                return;
+            }
+
+            macroActive = true;
+            document.getElementById('send-macro-btn').disabled = true;
+            document.getElementById('loading-spinner').style.display = 'block';
+
+            fetch('/send_macro', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ id: selectedMacroId, device: device })
+            })
+            .then(response => response.json())
+            .then(data => {
+                macroActive = false;
+                document.getElementById('send-macro-btn').disabled = false;
+                document.getElementById('loading-spinner').style.display = 'none';
+                if (data.success) {
+                    alert('Macro successfully sent.');
+                } else {
+                    alert('An error occurred while sending the macro.');
+                }
+            });
+        };
+
+        document.getElementById('screenshot-btn').onclick = () => {
+            const device = document.getElementById('device-selection').value;
+            if (!device) {
+                alert('Please select a device.');
+                return;
+            }
+
+            window.open('/screenshot?device=' + encodeURIComponent(device), '_blank');
+        };
+
+        document.getElementById('send-direct-btn').onclick = () => {
+            const device = document.getElementById('device-selection').value;
+            if (!device) {
+                alert('Please select a device.');
+                return;
+            }
+
+            const text = document.getElementById('direct-text').value;
+            if (!text) {
+                alert('Please enter text.');
+                return;
+            }
+
+            fetch('/test_step', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ step: { type: 'text', value: text }, device: device })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Text successfully sent.');
+                } else {
+                    alert('An error occurred while sending the text.');
+                }
+            });
+        };
+
+        getMacros();
+        getDevices();
+        setInterval(getDevices, 5000);
+    </script>
+</body>
+</html>
